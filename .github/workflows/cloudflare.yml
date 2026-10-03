@@ -1,0 +1,59 @@
+name: Cloudflare Private Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "PawnGuard deployment target"
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pawnguard-cloudflare-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  validate-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm install --prefix cloudflare
+      - run: npm run check --prefix cloudflare
+      - run: npm test --prefix cloudflare
+
+      - name: Verify Cloudflare bootstrap credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo "Missing CLOUDFLARE_API_TOKEN in this PawnGuard GitHub environment."; exit 1; }
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "Missing CLOUDFLARE_ACCOUNT_ID in this PawnGuard GitHub environment."; exit 1; }
+
+      - name: Clone PBN Access allow-policy rules to PawnGuard
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          PAWNGUARD_ACCESS_SOURCE_DOMAIN: ${{ vars.PAWNGUARD_ACCESS_SOURCE_DOMAIN }}
+          PAWNGUARD_ACCESS_DOMAIN: ${{ vars.PAWNGUARD_ACCESS_DOMAIN }}
+          CLOUDFLARE_ACCESS_TEAM_DOMAIN: ${{ vars.CLOUDFLARE_ACCESS_TEAM_DOMAIN }}
+        run: npm run provision:access --prefix cloudflare
+
+      - name: Deploy Worker and D1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          PAWNGUARD_ACCESS_DOMAIN: ${{ vars.PAWNGUARD_ACCESS_DOMAIN }}
+          PAWNGUARD_ALLOWED_ORIGINS: ${{ vars.PAWNGUARD_ALLOWED_ORIGINS }}
+          PAWNGUARD_AUTH_ISSUER: ${{ vars.PAWNGUARD_AUTH_ISSUER }}
+          PAWNGUARD_AUTH_JWKS_URL: ${{ vars.PAWNGUARD_AUTH_JWKS_URL }}
+        run: npm run deploy --prefix cloudflare -- '${{ inputs.environment }}'
