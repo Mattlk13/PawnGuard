@@ -1,0 +1,227 @@
+import { z } from "zod";
+import { ApiError, authenticate, requireRole } from "./auth";
+import { normalizeText } from "./matching";
+import { audit, hashJson, id, identifiers, screenActiveInventory, screenItem } from "./store";
+import type { Env } from "./types";
+
+const itemSchema=z.object({
+  locationId:z.string().min(1),
+  transactionId:z.string().min(1),
+  category:z.string().min(1).max(120),
+  manufacturer:z.string().max(120).optional(),
+  model:z.string().max(120).optional(),
+  serial:z.string().max(160).optional(),
+  imei:z.string().max(32).optional(),
+  vin:z.string().max(32).optional(),
+  upc:z.string().max(32).optional(),
+  description:z.string().max(2000).optional(),
+  distinctiveMarks:z.string().max(2000).optional(),
+  photoManifest:z.array(z.object({key:z.string(),sha256:z.string().optional()})).max(20).optional()
+});
+
+const signalSchema=z.object({
+  provider:z.string().min(1).max(120),
+  providerRecordRef:z.string().min(1).max(200),
+  authorityLevel:z.enum(["informational","authorized_feed","law_enforcement"]),
+  caseNumber:z.string().max(160).optional(),
+  category:z.string().max(120).optional(),
+  manufacturer:z.string().max(120).optional(),
+  model:z.string().max(120).optional(),
+  serial:z.string().max(160).optional(),
+  imei:z.string().max(32).optional(),
+  vin:z.string().max(32).optional(),
+  upc:z.string().max(32).optional(),
+  description:z.string().max(4000).optional(),
+  distinctiveMarks:z.string().max(4000).optional(),
+  reportedAt:z.string().datetime()
+});
+
+function cid(req?:Request) {
+  return req?.headers.get("x-correlation-id") || crypto.randomUUID();
+}
+function json(body:unknown,status=200,correlationId?:string) {
+  return new Response(JSON.stringify(body),{
+    status,
+    headers:{
+      "content-type":"application/json; charset=utf-8",
+      ...(correlationId?{"x-correlation-id":correlationId}:{})
+    }
+  });
+}
+function errorResponse(error:unknown,correlationId:string) {
+  if (error instanceof ApiError) return json({error:{code:error.code,message:error.message},correlationId},error.status,correlationId);
+  if (error instanceof z.ZodError) return json({error:{code:"INVALID_INPUT",message:"Request validation failed.",issues:error.issues},correlationId},400,correlationId);
+  console.error(error);
+  return json({error:{code:"INTERNAL_ERROR",message:"Unexpected server error."},correlationId},500,correlationId);
+}
+async function body(req:Request) {
+  const len=Number(req.headers.get("content-length") || 0);
+  if (len>128_000) throw new ApiError(413,"PAYLOAD_TOO_LARGE","Request exceeds 128KB.");
+  return req.json();
+}
+
+async function api(req:Request,env:Env) {
+  const correlationId=cid(req);
+  const actor=await authenticate(req,env);
+  const url=new URL(req.url);
+  const key=`${req.method} ${url.pathname}`;
+
+  if (key==="GET /v1/me") return json({data:actor,correlationId},200,correlationId);
+
+  if (key==="POST /v1/inventory/intake") {
+    requireRole(actor,["clerk","manager","compliance","admin"]);
+    const input=itemSchema.parse(await body(req));
+    if (!actor.locationIds.includes(input.locationId) && actor.role!=="admin")
+      throw new ApiError(403,"LOCATION_DENIED","You are not assigned to this location.");
+    const tx=await env.PAWNGUARD_DB.prepare(
+      "SELECT id FROM transactions WHERE id=? AND shop_id=? AND location_id=?"
+    ).bind(input.transactionId,actor.shopId,input.locationId).first();
+    if (!tx) throw new ApiError(404,"TRANSACTION_NOT_FOUND","Transaction not found for this shop/location.");
+    const ids=identifiers(input);
+    const itemId=id("itm");
+    await env.PAWNGUARD_DB.prepare(
+      `INSERT INTO inventory_items(
+        id,shop_id,location_id,transaction_id,status,category,manufacturer,model,
+        serial_normalized,imei_normalized,vin_normalized,upc_normalized,
+        description,distinctive_marks,photo_manifest,intake_at,created_by
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).bind(
+      itemId,actor.shopId,input.locationId,input.transactionId,"intake",
+      normalizeText(input.category),normalizeText(input.manufacturer),normalizeText(input.model),
+      ids.serial??null,ids.imei??null,ids.vin??null,ids.upc??null,
+      normalizeText(input.description),normalizeText(input.distinctiveMarks),
+      input.photoManifest?JSON.stringify(input.photoManifest):null,new Date().toISOString(),actor.userId
+    ).run();
+    await audit(env.PAWNGUARD_DB,actor,"inventory.intake","inventory_item",itemId,correlationId,{transactionId:input.transactionId});
+    const screening=await screenItem(env.PAWNGUARD_DB,actor.shopId,itemId,"intake",correlationId);
+    if (screening.result!=="confirmed_hold")
+      await env.PAWNGUARD_DB.prepare("UPDATE inventory_items SET status='active' WHERE id=?").bind(itemId).run();
+    return json({data:{itemId,screening},correlationId},201,correlationId);
+  }
+
+  if (key==="GET /v1/inventory") {
+    const status=url.searchParams.get("status");
+    const q=status
+      ? "SELECT * FROM inventory_items WHERE shop_id=? AND status=? ORDER BY intake_at DESC LIMIT 250"
+      : "SELECT * FROM inventory_items WHERE shop_id=? ORDER BY intake_at DESC LIMIT 250";
+    const result=status
+      ? await env.PAWNGUARD_DB.prepare(q).bind(actor.shopId,status).all()
+      : await env.PAWNGUARD_DB.prepare(q).bind(actor.shopId).all();
+    return json({data:result.results,correlationId},200,correlationId);
+  }
+
+  if (key==="GET /v1/alerts") {
+    const result=await env.PAWNGUARD_DB.prepare(
+      `SELECT a.*,i.category,i.manufacturer,i.model,i.serial_normalized,i.imei_normalized,i.vin_normalized,
+              s.provider,s.provider_record_ref,s.case_number,s.authority_level
+       FROM alerts a
+       JOIN inventory_items i ON i.id=a.item_id
+       JOIN stolen_signals s ON s.id=a.signal_id
+       WHERE a.shop_id=? AND a.state IN ('open','acknowledged','escalated')
+       ORDER BY a.created_at DESC LIMIT 250`
+    ).bind(actor.shopId).all();
+    return json({data:result.results,correlationId},200,correlationId);
+  }
+
+  const rescreen=/^\/v1\/inventory\/([^/]+)\/screen$/.exec(url.pathname);
+  if (req.method==="POST" && rescreen) {
+    requireRole(actor,["manager","compliance","admin"]);
+    const result=await screenItem(env.PAWNGUARD_DB,actor.shopId,decodeURIComponent(rescreen[1]),"manual",correlationId);
+    return json({data:result,correlationId},200,correlationId);
+  }
+
+  if (key==="POST /v1/signals") {
+    requireRole(actor,["compliance","admin"]);
+    const input=signalSchema.parse(await body(req));
+    const ids=identifiers(input);
+    const signalId=id("sig");
+    const payloadHash=await hashJson(input);
+    await env.PAWNGUARD_DB.prepare(
+      `INSERT INTO stolen_signals(
+        id,provider,provider_record_ref,authority_level,case_number,category,manufacturer,model,
+        serial_normalized,imei_normalized,vin_normalized,upc_normalized,description,distinctive_marks,
+        reported_at,source_received_at,source_payload_hash,active
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+      ON CONFLICT(provider,provider_record_ref) DO UPDATE SET
+        authority_level=excluded.authority_level,case_number=excluded.case_number,category=excluded.category,
+        manufacturer=excluded.manufacturer,model=excluded.model,serial_normalized=excluded.serial_normalized,
+        imei_normalized=excluded.imei_normalized,vin_normalized=excluded.vin_normalized,
+        upc_normalized=excluded.upc_normalized,description=excluded.description,
+        distinctive_marks=excluded.distinctive_marks,reported_at=excluded.reported_at,
+        source_received_at=excluded.source_received_at,source_payload_hash=excluded.source_payload_hash,active=1`
+    ).bind(
+      signalId,input.provider,input.providerRecordRef,input.authorityLevel,input.caseNumber??null,
+      normalizeText(input.category),normalizeText(input.manufacturer),normalizeText(input.model),
+      ids.serial??null,ids.imei??null,ids.vin??null,ids.upc??null,
+      normalizeText(input.description),normalizeText(input.distinctiveMarks),
+      input.reportedAt,new Date().toISOString(),payloadHash
+    ).run();
+    await audit(env.PAWNGUARD_DB,actor,"signal.ingested","stolen_signal",signalId,correlationId,{
+      provider:input.provider,providerRecordRef:input.providerRecordRef,authorityLevel:input.authorityLevel
+    });
+    const scan=await screenActiveInventory(env.PAWNGUARD_DB,correlationId);
+    return json({data:{signalId,inventoryScan:scan},correlationId},201,correlationId);
+  }
+
+  const ack=/^\/v1\/alerts\/([^/]+)\/acknowledge$/.exec(url.pathname);
+  if (req.method==="POST" && ack) {
+    requireRole(actor,["manager","compliance","admin"]);
+    const alertId=decodeURIComponent(ack[1]);
+    const result=await env.PAWNGUARD_DB.prepare(
+      "UPDATE alerts SET state='acknowledged',acknowledged_at=? WHERE id=? AND shop_id=? AND state='open'"
+    ).bind(new Date().toISOString(),alertId,actor.shopId).run();
+    if (!result.meta.changes) throw new ApiError(404,"ALERT_NOT_FOUND","Open alert not found.");
+    await audit(env.PAWNGUARD_DB,actor,"alert.acknowledged","alert",alertId,correlationId,{});
+    return json({data:{alertId,state:"acknowledged"},correlationId},200,correlationId);
+  }
+
+  throw new ApiError(404,"NOT_FOUND","API route not found.");
+}
+
+function security(response:Response,origin:string|null,allowed:string[]) {
+  const h=new Headers(response.headers);
+  h.set("cache-control","no-store");
+  h.set("x-content-type-options","nosniff");
+  h.set("x-frame-options","DENY");
+  h.set("referrer-policy","no-referrer");
+  h.set("strict-transport-security","max-age=31536000; includeSubDomains");
+  h.set("permissions-policy","camera=(self), microphone=(), geolocation=()");
+  h.set("cross-origin-opener-policy","same-origin");
+  h.set("content-security-policy","default-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data: blob:; script-src 'self'; style-src 'self'; connect-src 'self'; form-action 'self'");
+  if (origin && allowed.includes(origin)) {
+    h.set("access-control-allow-origin",origin);
+    h.set("access-control-allow-methods","GET,POST,OPTIONS");
+    h.set("access-control-allow-headers","Authorization,Content-Type,X-Correlation-ID,Cf-Access-Jwt-Assertion");
+    h.set("vary","Origin");
+  }
+  return new Response(response.body,{status:response.status,headers:h});
+}
+
+export default {
+  async fetch(req:Request,env:Env):Promise<Response> {
+    const correlationId=cid(req);
+    const url=new URL(req.url);
+    const origin=req.headers.get("origin");
+    const allowed=(env.PAWNGUARD_ALLOWED_ORIGINS??"").split(",").map(x=>x.trim()).filter(Boolean);
+    try {
+      if (origin && !allowed.includes(origin)) throw new ApiError(403,"ORIGIN_DENIED","Origin is not allowed.");
+      if (req.method==="OPTIONS") return security(new Response(null,{status:204}),origin,allowed);
+      let response:Response;
+      if (url.pathname==="/health") {
+        response=json({status:env.PAWNGUARD_DB?"configured":"storage_missing",environment:env.PAWNGUARD_ENV},env.PAWNGUARD_DB?200:503,correlationId);
+      } else if (url.pathname.startsWith("/v1/")) {
+        response=await api(req,env);
+      } else {
+        response=env.ASSETS ? await env.ASSETS.fetch(req) : json({project:"PawnGuard",health:"/health"},200,correlationId);
+      }
+      return security(response,origin,allowed);
+    } catch(error) {
+      return security(errorResponse(error,correlationId),origin,allowed);
+    }
+  },
+
+  async scheduled(_controller:ScheduledController,env:Env,ctx:ExecutionContext) {
+    const correlationId=`cron-${crypto.randomUUID()}`;
+    ctx.waitUntil(screenActiveInventory(env.PAWNGUARD_DB,correlationId));
+  }
+};
