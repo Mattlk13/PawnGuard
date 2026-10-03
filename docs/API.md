@@ -25,9 +25,9 @@ All `/v1/*` endpoints require a verified bearer JWT or Cloudflare Access asserti
 Signal authority levels:
 - `informational`
 - `authorized_feed`
-- `law_enforcement`
+- `law_enforcement_report`\n- `law_enforcement_hold`
 
-Only a high-confidence match to a signal explicitly classified as `law_enforcement` can yield `confirmed_hold` from the automatic matcher. Descriptive/fuzzy similarity alone cannot.
+Only a high-confidence match to a signal explicitly classified as `law_enforcement_hold` can yield `confirmed_hold` from the automatic matcher. Descriptive/fuzzy similarity alone cannot.
 
 ## Scheduled operation
 
