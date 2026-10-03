@@ -110,6 +110,10 @@ export async function screenItem(
         JSON.stringify({severity,score:match.score,reasons:match.reasons,signalId:match.signal.id}),
         "delivered",createdAt
       ).run();
+    } else {
+      await db.prepare(
+        "UPDATE alerts SET screening_run_id=?,severity=?,score=?,reason_json=? WHERE id=? AND score<?"
+      ).bind(runId,severity,match.score,JSON.stringify(match.reasons),existing.id,match.score).run();
     }
   }
 
