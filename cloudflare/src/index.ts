@@ -19,6 +19,34 @@ const itemSchema=z.object({
   photoManifest:z.array(z.object({key:z.string(),sha256:z.string().optional()})).max(20).optional()
 });
 
+const customerSchema=z.object({
+  fullName:z.string().min(1).max(200),
+  idType:z.string().max(80).optional(),
+  idLast4:z.string().max(8).optional(),
+  dateOfBirth:z.string().max(32).optional(),
+  contact:z.record(z.unknown()).optional()
+});
+
+const transactionSchema=z.object({
+  locationId:z.string().min(1),
+  customerId:z.string().min(1),
+  kind:z.enum(["pawn","purchase"]),
+  amountCents:z.number().int().nonnegative().optional(),
+  occurredAt:z.string().datetime().optional()
+});
+
+const holdSchema=z.object({
+  alertId:z.string().optional(),
+  authorityType:z.enum(["internal_review","law_enforcement"]),
+  agencyName:z.string().max(200).optional(),
+  officerName:z.string().max(200).optional(),
+  officerIdentifier:z.string().max(100).optional(),
+  caseNumber:z.string().max(160).optional(),
+  issuedAt:z.string().datetime().optional(),
+  expiresAt:z.string().datetime().optional(),
+  documentManifest:z.array(z.object({key:z.string(),sha256:z.string().optional()})).max(20).optional()
+});
+
 const signalSchema=z.object({
   provider:z.string().min(1).max(120),
   providerRecordRef:z.string().min(1).max(200),
@@ -67,6 +95,40 @@ async function api(req:Request,env:Env) {
   const key=`${req.method} ${url.pathname}`;
 
   if (key==="GET /v1/me") return json({data:actor,correlationId},200,correlationId);
+
+  if (key==="POST /v1/customers") {
+    requireRole(actor,["clerk","manager","compliance","admin"]);
+    const input=customerSchema.parse(await body(req));
+    const customerId=id("cus");
+    await env.PAWNGUARD_DB.prepare(
+      "INSERT INTO customers(id,shop_id,full_name,id_type,id_last4,date_of_birth,contact_json) VALUES(?,?,?,?,?,?,?)"
+    ).bind(
+      customerId,actor.shopId,input.fullName,input.idType??null,input.idLast4??null,
+      input.dateOfBirth??null,input.contact?JSON.stringify(input.contact):null
+    ).run();
+    await audit(env.PAWNGUARD_DB,actor,"customer.created","customer",customerId,correlationId,{});
+    return json({data:{customerId},correlationId},201,correlationId);
+  }
+
+  if (key==="POST /v1/transactions") {
+    requireRole(actor,["clerk","manager","compliance","admin"]);
+    const input=transactionSchema.parse(await body(req));
+    if (!actor.locationIds.includes(input.locationId) && actor.role!=="admin")
+      throw new ApiError(403,"LOCATION_DENIED","You are not assigned to this location.");
+    const customer=await env.PAWNGUARD_DB.prepare(
+      "SELECT id FROM customers WHERE id=? AND shop_id=?"
+    ).bind(input.customerId,actor.shopId).first();
+    if (!customer) throw new ApiError(404,"CUSTOMER_NOT_FOUND","Customer not found.");
+    const txId=id("txn");
+    await env.PAWNGUARD_DB.prepare(
+      "INSERT INTO transactions(id,shop_id,location_id,customer_id,kind,status,amount_cents,occurred_at,created_by) VALUES(?,?,?,?,?,'draft',?,?,?)"
+    ).bind(
+      txId,actor.shopId,input.locationId,input.customerId,input.kind,input.amountCents??null,
+      input.occurredAt??new Date().toISOString(),actor.userId
+    ).run();
+    await audit(env.PAWNGUARD_DB,actor,"transaction.created","transaction",txId,correlationId,{kind:input.kind});
+    return json({data:{transactionId:txId,status:"draft"},correlationId},201,correlationId);
+  }
 
   if (key==="POST /v1/inventory/intake") {
     requireRole(actor,["clerk","manager","compliance","admin"]);
@@ -161,6 +223,32 @@ async function api(req:Request,env:Env) {
     });
     const scan=await screenActiveInventory(env.PAWNGUARD_DB,correlationId);
     return json({data:{signalId,inventoryScan:scan},correlationId},201,correlationId);
+  }
+
+  const hold=/^\/v1\/inventory\/([^/]+)\/holds$/.exec(url.pathname);
+  if (req.method==="POST" && hold) {
+    requireRole(actor,["manager","compliance","admin"]);
+    const itemId=decodeURIComponent(hold[1]);
+    const input=holdSchema.parse(await body(req));
+    const item=await env.PAWNGUARD_DB.prepare("SELECT id FROM inventory_items WHERE id=? AND shop_id=?")
+      .bind(itemId,actor.shopId).first();
+    if(!item) throw new ApiError(404,"ITEM_NOT_FOUND","Inventory item not found.");
+    if(input.authorityType==="law_enforcement" && (!input.agencyName || !input.caseNumber))
+      throw new ApiError(400,"HOLD_DETAILS_REQUIRED","Law-enforcement holds require agency and case number.");
+    const holdId=id("hld");
+    await env.PAWNGUARD_DB.prepare(
+      "INSERT INTO holds(id,shop_id,item_id,alert_id,authority_type,agency_name,officer_name,officer_identifier,case_number,issued_at,expires_at,document_manifest,state) VALUES(?,?,?,?,?,?,?,?,?,?,?,?, 'active')"
+    ).bind(
+      holdId,actor.shopId,itemId,input.alertId??null,input.authorityType,input.agencyName??null,
+      input.officerName??null,input.officerIdentifier??null,input.caseNumber??null,
+      input.issuedAt??new Date().toISOString(),input.expiresAt??null,
+      input.documentManifest?JSON.stringify(input.documentManifest):null
+    ).run();
+    await env.PAWNGUARD_DB.prepare("UPDATE inventory_items SET status='hold' WHERE id=?").bind(itemId).run();
+    await audit(env.PAWNGUARD_DB,actor,"hold.created","hold",holdId,correlationId,{
+      itemId,authorityType:input.authorityType,caseNumber:input.caseNumber??null
+    });
+    return json({data:{holdId,state:"active"},correlationId},201,correlationId);
   }
 
   const ack=/^\/v1\/alerts\/([^/]+)\/acknowledge$/.exec(url.pathname);
