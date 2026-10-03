@@ -11,7 +11,7 @@ test("exact law-enforcement serial match becomes confirmed hold",()=>{
     {category:"TOOLS",manufacturer:"Milwaukee",model:"2962",serial:"abc-123"},
     {
       id:"sig1",
-      authority_level:"law_enforcement",
+      authority_level:"law_enforcement_hold",
       serial_normalized:"ABC123",
       manufacturer:"MILWAUKEE",
       model:"2962"
@@ -26,7 +26,7 @@ test("descriptive similarity alone never becomes confirmed hold",()=>{
     {category:"TOOLS",manufacturer:"Milwaukee",model:"2962",description:"red impact wrench",distinctiveMarks:"MLK scratched on battery"},
     {
       id:"sig2",
-      authority_level:"law_enforcement",
+      authority_level:"law_enforcement_report",
       manufacturer:"MILWAUKEE",
       model:"2962",
       description:"red cordless impact wrench",
