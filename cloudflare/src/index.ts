@@ -203,7 +203,7 @@ async function api(req:Request,env:Env) {
     requireRole(actor,["compliance","admin"]);
     const input=signalSchema.parse(await body(req));
     const ids=identifiers(input);
-    const signalId=id("sig");
+    const proposedSignalId=id("sig");
     const payloadHash=await hashJson(input);
     await env.PAWNGUARD_DB.prepare(
       `INSERT INTO stolen_signals(
@@ -219,12 +219,16 @@ async function api(req:Request,env:Env) {
         distinctive_marks=excluded.distinctive_marks,reported_at=excluded.reported_at,
         source_received_at=excluded.source_received_at,source_payload_hash=excluded.source_payload_hash,active=1`
     ).bind(
-      signalId,input.provider,input.providerRecordRef,input.authorityLevel,input.caseNumber??null,
+      proposedSignalId,input.provider,input.providerRecordRef,input.authorityLevel,input.caseNumber??null,
       input.category?normalizeText(input.category):null,input.manufacturer?normalizeText(input.manufacturer):null,input.model?normalizeText(input.model):null,
       ids.serial??null,ids.imei??null,ids.vin??null,ids.upc??null,
       input.description?normalizeText(input.description):null,input.distinctiveMarks?normalizeText(input.distinctiveMarks):null,
       input.reportedAt,new Date().toISOString(),payloadHash
     ).run();
+    const actualSignal=await env.PAWNGUARD_DB.prepare(
+      "SELECT id FROM stolen_signals WHERE provider=? AND provider_record_ref=?"
+    ).bind(input.provider,input.providerRecordRef).first<{id:string}>();
+    const signalId=actualSignal?.id ?? proposedSignalId;
     await audit(env.PAWNGUARD_DB,actor,"signal.ingested","stolen_signal",signalId,correlationId,{
       provider:input.provider,providerRecordRef:input.providerRecordRef,authorityLevel:input.authorityLevel
     });
