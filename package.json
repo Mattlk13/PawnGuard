@@ -1,0 +1,13 @@
+{
+  "name": "pawnguard",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm run dev --prefix cloudflare",
+    "check": "npm run check --prefix cloudflare",
+    "test": "npm test --prefix cloudflare",
+    "build": "npm run build --prefix cloudflare",
+    "deploy:staging": "npm run deploy --prefix cloudflare -- staging",
+    "deploy:production": "npm run deploy --prefix cloudflare -- production"
+  }
+}
