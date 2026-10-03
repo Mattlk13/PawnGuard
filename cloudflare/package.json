@@ -8,7 +8,8 @@
     "test": "node --import tsx --test test/*.test.ts",
     "build": "wrangler deploy --dry-run --config ../wrangler.jsonc",
     "deploy": "node scripts/deploy.mjs",
-    "provision:access": "node scripts/provision-access.mjs"
+    "provision:access": "node scripts/provision-access.mjs",
+    "bootstrap:shop": "node scripts/bootstrap-shop.mjs"
   },
   "dependencies": {
     "jose": "^6.1.0",
