@@ -94,11 +94,21 @@ export async function screenItem(
     const existing = await db.prepare("SELECT id FROM alerts WHERE item_id=? AND signal_id=?")
       .bind(itemId,match.signal.id).first<{id:string}>();
     if (!existing) {
+      const alertId=id("alt");
+      const createdAt=new Date().toISOString();
       await db.prepare(
         "INSERT INTO alerts(id,shop_id,item_id,signal_id,screening_run_id,severity,score,reason_json,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)"
       ).bind(
-        id("alt"),shopId,itemId,match.signal.id,runId,severity,match.score,
-        JSON.stringify(match.reasons),"open",new Date().toISOString()
+        alertId,shopId,itemId,match.signal.id,runId,severity,match.score,
+        JSON.stringify(match.reasons),"open",createdAt
+      ).run();
+      await db.prepare(
+        "INSERT INTO notifications(id,shop_id,alert_id,item_id,channel,subject,body,state,created_at) VALUES(?,?,?,?,?,?,?,?,?)"
+      ).bind(
+        id("ntf"),shopId,alertId,itemId,"in_app",
+        severity==="confirmed_hold" ? "Property hold required" : "Property match requires review",
+        JSON.stringify({severity,score:match.score,reasons:match.reasons,signalId:match.signal.id}),
+        "delivered",createdAt
       ).run();
     }
   }
