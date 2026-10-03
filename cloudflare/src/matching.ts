@@ -26,7 +26,7 @@ export function normalizeItem(item: NormalizedItem): NormalizedItem {
 
 export interface SignalLike {
   id: string;
-  authority_level: "informational" | "authorized_feed" | "law_enforcement";
+  authority_level: "informational" | "authorized_feed" | "law_enforcement_report" | "law_enforcement_hold";
   category?: string | null;
   manufacturer?: string | null;
   model?: string | null;
@@ -88,7 +88,7 @@ export function scoreMatch(item: NormalizedItem, signal: SignalLike): MatchResul
 
   score = Math.min(100,score);
   let disposition:MatchDisposition = "clear";
-  if (score >= 95 && signal.authority_level === "law_enforcement") disposition = "confirmed_hold";
+  if (score >= 95 && signal.authority_level === "law_enforcement_hold") disposition = "confirmed_hold";
   else if (score >= 80) disposition = "possible_match";
   else if (score >= 55) disposition = "review";
 
