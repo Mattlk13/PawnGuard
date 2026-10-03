@@ -78,7 +78,7 @@ CREATE TABLE stolen_signals (
   id TEXT PRIMARY KEY,
   provider TEXT NOT NULL,
   provider_record_ref TEXT NOT NULL,
-  authority_level TEXT NOT NULL CHECK(authority_level IN ('informational','authorized_feed','law_enforcement')),
+  authority_level TEXT NOT NULL CHECK(authority_level IN ('informational','authorized_feed','law_enforcement_report','law_enforcement_hold')),
   case_number TEXT,
   category TEXT,
   manufacturer TEXT,
