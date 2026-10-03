@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pawnguard-local",
+  "main": "cloudflare/src/index.ts",
+  "compatibility_date": "2026-10-03",
+  "observability": { "enabled": true },
+  "vars": {
+    "PAWNGUARD_ENV": "local",
+    "PAWNGUARD_ALLOWED_ORIGINS": "http://localhost:8787",
+    "PAWNGUARD_AUTH_ISSUER": "https://example.cloudflareaccess.com",
+    "PAWNGUARD_AUTH_AUDIENCE": "local-placeholder",
+    "PAWNGUARD_AUTH_JWKS_URL": "https://example.cloudflareaccess.com/cdn-cgi/access/certs"
+  },
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    {
+      "binding": "PAWNGUARD_DB",
+      "database_name": "pawnguard-local",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "cloudflare/migrations"
+    }
+  ],
+  "triggers": {
+    "crons": ["17 3 * * *"]
+  }
+}
