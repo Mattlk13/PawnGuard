@@ -172,6 +172,13 @@ async function api(req:Request,env:Env) {
     return json({data:result.results,correlationId},200,correlationId);
   }
 
+  if (key==="GET /v1/notifications") {
+    const result=await env.PAWNGUARD_DB.prepare(
+      "SELECT * FROM notifications WHERE shop_id=? ORDER BY created_at DESC LIMIT 250"
+    ).bind(actor.shopId).all();
+    return json({data:result.results,correlationId},200,correlationId);
+  }
+
   if (key==="GET /v1/alerts") {
     const result=await env.PAWNGUARD_DB.prepare(
       `SELECT a.*,i.category,i.manufacturer,i.model,i.serial_normalized,i.imei_normalized,i.vin_normalized,
@@ -223,6 +230,48 @@ async function api(req:Request,env:Env) {
     });
     const scan=await screenActiveInventory(env.PAWNGUARD_DB,correlationId);
     return json({data:{signalId,inventoryScan:scan},correlationId},201,correlationId);
+  }
+
+  const disposition=/^\/v1\/inventory\/([^/]+)\/disposition$/.exec(url.pathname);
+  if (req.method==="POST" && disposition) {
+    requireRole(actor,["manager","compliance","admin"]);
+    const itemId=decodeURIComponent(disposition[1]);
+    const input=z.object({
+      status:z.enum(["redeemed","sold","released","evidence"]),
+      reason:z.string().max(1000).optional()
+    }).parse(await body(req));
+    const item=await env.PAWNGUARD_DB.prepare(
+      "SELECT status FROM inventory_items WHERE id=? AND shop_id=?"
+    ).bind(itemId,actor.shopId).first<{status:string}>();
+    if(!item) throw new ApiError(404,"ITEM_NOT_FOUND","Inventory item not found.");
+    const blockingAlerts=await env.PAWNGUARD_DB.prepare(
+      "SELECT count(*) AS n FROM alerts WHERE item_id=? AND shop_id=? AND state IN ('open','acknowledged','escalated')"
+    ).bind(itemId,actor.shopId).first<{n:number}>();
+    const activeHold=await env.PAWNGUARD_DB.prepare(
+      "SELECT count(*) AS n FROM holds WHERE item_id=? AND shop_id=? AND state='active'"
+    ).bind(itemId,actor.shopId).first<{n:number}>();
+    if(Number(blockingAlerts?.n||0)>0 || Number(activeHold?.n||0)>0)
+      throw new ApiError(409,"PROPERTY_LOCKED","Unresolved property alert or active hold blocks release, redemption, or sale.");
+    const occurredAt=new Date().toISOString();
+    await env.PAWNGUARD_DB.prepare("UPDATE inventory_items SET status=? WHERE id=? AND shop_id=?")
+      .bind(input.status,itemId,actor.shopId).run();
+    await env.PAWNGUARD_DB.prepare(
+      "INSERT INTO disposition_events(id,shop_id,item_id,from_status,to_status,reason,actor_user_id,occurred_at) VALUES(?,?,?,?,?,?,?,?)"
+    ).bind(id("dsp"),actor.shopId,itemId,item.status,input.status,input.reason??null,actor.userId,occurredAt).run();
+    await audit(env.PAWNGUARD_DB,actor,"inventory.disposition","inventory_item",itemId,correlationId,{
+      from:item.status,to:input.status,reason:input.reason??null
+    });
+    return json({data:{itemId,status:input.status},correlationId},200,correlationId);
+  }
+
+  const notificationRead=/^\/v1\/notifications\/([^/]+)\/read$/.exec(url.pathname);
+  if (req.method==="POST" && notificationRead) {
+    const notificationId=decodeURIComponent(notificationRead[1]);
+    const result=await env.PAWNGUARD_DB.prepare(
+      "UPDATE notifications SET state='read',read_at=? WHERE id=? AND shop_id=?"
+    ).bind(new Date().toISOString(),notificationId,actor.shopId).run();
+    if(!result.meta.changes) throw new ApiError(404,"NOTIFICATION_NOT_FOUND","Notification not found.");
+    return json({data:{notificationId,state:"read"},correlationId},200,correlationId);
   }
 
   const hold=/^\/v1\/inventory\/([^/]+)\/holds$/.exec(url.pathname);
