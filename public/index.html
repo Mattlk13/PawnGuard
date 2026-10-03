@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PawnGuard</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">PROPERTY INTEGRITY PLATFORM</p>
+      <h1>PawnGuard</h1>
+      <p class="lede">Screen at intake. Keep checking after intake.</p>
+    </div>
+    <div id="identity" class="pill">Checking session…</div>
+  </header>
+  <main>
+    <section class="metrics" aria-label="Status">
+      <article><span>Open alerts</span><strong id="alertCount">—</strong></article>
+      <article><span>Inventory</span><strong id="inventoryCount">—</strong></article>
+      <article><span>Daily rescan</span><strong>Enabled</strong></article>
+      <article><span>Access</span><strong>Private</strong></article>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div><p class="eyebrow">COMPLIANCE QUEUE</p><h2>Property alerts</h2></div>
+        <button id="refresh">Refresh</button>
+      </div>
+      <div id="alerts" class="table-wrap"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div><p class="eyebrow">ACTIVE CUSTODY</p><h2>Inventory</h2></div>
+      </div>
+      <div id="inventory" class="table-wrap"></div>
+    </section>
+
+    <section class="notice">
+      <strong>Operational boundary:</strong>
+      PawnGuard surfaces property matches for human review. A similarity score is not a finding that a customer committed theft. Law-enforcement holds are represented separately from internal review alerts.
+    </section>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
