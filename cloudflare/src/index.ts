@@ -149,9 +149,9 @@ async function api(req:Request,env:Env) {
       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).bind(
       itemId,actor.shopId,input.locationId,input.transactionId,"intake",
-      normalizeText(input.category),normalizeText(input.manufacturer),normalizeText(input.model),
+      normalizeText(input.category),input.manufacturer?normalizeText(input.manufacturer):null,input.model?normalizeText(input.model):null,
       ids.serial??null,ids.imei??null,ids.vin??null,ids.upc??null,
-      normalizeText(input.description),normalizeText(input.distinctiveMarks),
+      input.description?normalizeText(input.description):null,input.distinctiveMarks?normalizeText(input.distinctiveMarks):null,
       input.photoManifest?JSON.stringify(input.photoManifest):null,new Date().toISOString(),actor.userId
     ).run();
     await audit(env.PAWNGUARD_DB,actor,"inventory.intake","inventory_item",itemId,correlationId,{transactionId:input.transactionId});
@@ -213,9 +213,9 @@ async function api(req:Request,env:Env) {
         source_received_at=excluded.source_received_at,source_payload_hash=excluded.source_payload_hash,active=1`
     ).bind(
       signalId,input.provider,input.providerRecordRef,input.authorityLevel,input.caseNumber??null,
-      normalizeText(input.category),normalizeText(input.manufacturer),normalizeText(input.model),
+      input.category?normalizeText(input.category):null,input.manufacturer?normalizeText(input.manufacturer):null,input.model?normalizeText(input.model):null,
       ids.serial??null,ids.imei??null,ids.vin??null,ids.upc??null,
-      normalizeText(input.description),normalizeText(input.distinctiveMarks),
+      input.description?normalizeText(input.description):null,input.distinctiveMarks?normalizeText(input.distinctiveMarks):null,
       input.reportedAt,new Date().toISOString(),payloadHash
     ).run();
     await audit(env.PAWNGUARD_DB,actor,"signal.ingested","stolen_signal",signalId,correlationId,{
