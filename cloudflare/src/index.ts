@@ -50,7 +50,7 @@ const holdSchema=z.object({
 const signalSchema=z.object({
   provider:z.string().min(1).max(120),
   providerRecordRef:z.string().min(1).max(200),
-  authorityLevel:z.enum(["informational","authorized_feed","law_enforcement"]),
+  authorityLevel:z.enum(["informational","authorized_feed","law_enforcement_report","law_enforcement_hold"]),
   caseNumber:z.string().max(160).optional(),
   category:z.string().max(120).optional(),
   manufacturer:z.string().max(120).optional(),
