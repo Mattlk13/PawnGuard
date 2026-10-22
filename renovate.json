@@ -2,5 +2,34 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "automerge": false,
+  "platformAutomerge": false,
+  "minimumReleaseAge": "7 days",
+  "prConcurrentLimit": 3,
+  "prHourlyLimit": 1,
+  "timezone": "America/Chicago",
+  "schedule": [
+    "before 6am on monday"
+  ],
+  "packageRules": [
+    {
+      "description": "Keep major upgrades individually reviewable",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Batch non-breaking development-tool updates",
+      "matchDepTypes": [
+        "devDependencies"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "development tooling"
+    }
   ]
 }
