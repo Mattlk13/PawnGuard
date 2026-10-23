@@ -60,6 +60,7 @@ export function scoreMatch(item: NormalizedItem, signal: SignalLike): MatchResul
   const n = normalizeItem(item);
   const reasons:string[] = [];
   let score = 0;
+  let exactItemIdentifier = false;
 
   const exact = [
     ["serial",n.serial,signal.serial_normalized],
@@ -72,6 +73,7 @@ export function scoreMatch(item: NormalizedItem, signal: SignalLike): MatchResul
     if (a && b && a === normalizeIdentifier(b)) {
       score = Math.max(score, label === "UPC" ? 72 : 98);
       reasons.push(`exact ${label} match`);
+      if (label !== "UPC") exactItemIdentifier = true;
     }
   }
 
@@ -88,7 +90,7 @@ export function scoreMatch(item: NormalizedItem, signal: SignalLike): MatchResul
 
   score = Math.min(100,score);
   let disposition:MatchDisposition = "clear";
-  if (score >= 95 && signal.authority_level === "law_enforcement_hold") disposition = "confirmed_hold";
+  if (score >= 95 && exactItemIdentifier && signal.authority_level === "law_enforcement_hold") disposition = "confirmed_hold";
   else if (score >= 80) disposition = "possible_match";
   else if (score >= 55) disposition = "review";
 
