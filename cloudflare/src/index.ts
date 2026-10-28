@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ApiError, authenticate, requireRole } from "./auth";
+import { readJsonBody as body } from "./body";
 import { normalizeText } from "./matching";
 import { audit, hashJson, id, identifiers, screenActiveInventory, screenItem } from "./store";
 import type { Env } from "./types";
@@ -81,11 +82,6 @@ function errorResponse(error:unknown,correlationId:string) {
   if (error instanceof z.ZodError) return json({error:{code:"INVALID_INPUT",message:"Request validation failed.",issues:error.issues},correlationId},400,correlationId);
   console.error(error);
   return json({error:{code:"INTERNAL_ERROR",message:"Unexpected server error."},correlationId},500,correlationId);
-}
-async function body(req:Request) {
-  const len=Number(req.headers.get("content-length") || 0);
-  if (len>128_000) throw new ApiError(413,"PAYLOAD_TOO_LARGE","Request exceeds 128KB.");
-  return req.json();
 }
 
 async function api(req:Request,env:Env) {
