@@ -13,12 +13,11 @@
   },
   "dependencies": {
     "jose": "^6.1.0",
-    "zod": "3.25.76"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",
     "@types/node": "^24.0.0",
-    "miniflare": "^4.0.0",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",
     "wrangler": "^4.0.0"
